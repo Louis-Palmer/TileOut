@@ -131,17 +131,22 @@ export function clipTileToRoom(
 
   const result: ClippedFragment[] = [];
   for (const triangleIdxs of groups.values()) {
-    const polygons = triangleIdxs.map((t) => fragments[t]!);
-    const allPoints = polygons.flat();
+    const rawPolygons = triangleIdxs.map((t) => fragments[t]!);
+    const allPoints = rawPolygons.flat();
     const minX = Math.min(...allPoints.map((p) => p.x));
     const maxX = Math.max(...allPoints.map((p) => p.x));
     const minY = Math.min(...allPoints.map((p) => p.y));
     const maxY = Math.max(...allPoints.map((p) => p.y));
     const bbWidth = maxX - minX;
     const bbHeight = maxY - minY;
-    const totalArea = polygons.reduce((sum, poly) => sum + polygonArea(poly), 0);
+    const totalArea = rawPolygons.reduce((sum, poly) => sum + polygonArea(poly), 0);
     const bbArea = bbWidth * bbHeight;
     const isPlainRect = Math.abs(totalArea - bbArea) < Math.max(1, bbArea * 1e-6);
+
+    // Only bother reconstructing the true outline for pieces that actually
+    // get rendered as a polygon (plain-rect pieces are drawn as a <rect>
+    // instead, so their raw per-triangle fragments are never used).
+    const polygons = isPlainRect ? rawPolygons : mergeFragmentsToOutline(rawPolygons);
 
     result.push({
       polygons,
@@ -151,6 +156,63 @@ export function clipTileToRoom(
   }
 
   return result;
+}
+
+const POINT_KEY_PRECISION = 100; // round to the nearest 0.01mm before matching
+
+function pointKey(p: Point): string {
+  return `${Math.round(p.x * POINT_KEY_PRECISION)},${Math.round(p.y * POINT_KEY_PRECISION)}`;
+}
+
+// Adjacent triangle fragments share their internal diagonal exactly,
+// traversed in opposite directions (earcut's triangles are consistently
+// wound) — so the piece's true outline is found by cancelling any edge
+// that appears once forward and once backward across the fragment set,
+// leaving only edges that are genuinely part of the outline (the tile's
+// own edges, or the room's real boundary). This is what stops an internal
+// triangulation seam from being drawn as a stray line through a cut piece.
+function mergeFragmentsToOutline(polygons: Point[][]): Point[][] {
+  const edges = new Map<string, { a: Point; b: Point }>();
+  for (const polygon of polygons) {
+    for (let i = 0; i < polygon.length; i++) {
+      const a = polygon[i];
+      const b = polygon[(i + 1) % polygon.length];
+      const forwardKey = `${pointKey(a)}>${pointKey(b)}`;
+      const reverseKey = `${pointKey(b)}>${pointKey(a)}`;
+      if (edges.has(reverseKey)) {
+        edges.delete(reverseKey);
+      } else {
+        edges.set(forwardKey, { a, b });
+      }
+    }
+  }
+
+  const remaining = Array.from(edges.values());
+  const byStartKey = new Map<string, { a: Point; b: Point }[]>();
+  for (const edge of remaining) {
+    const key = pointKey(edge.a);
+    if (!byStartKey.has(key)) byStartKey.set(key, []);
+    byStartKey.get(key)!.push(edge);
+  }
+
+  const used = new Set<{ a: Point; b: Point }>();
+  const loops: Point[][] = [];
+
+  for (const startEdge of remaining) {
+    if (used.has(startEdge)) continue;
+    const startKey = pointKey(startEdge.a);
+    const loop: Point[] = [];
+    let current: { a: Point; b: Point } | undefined = startEdge;
+    while (current) {
+      used.add(current);
+      loop.push(current.a);
+      if (pointKey(current.b) === startKey) break;
+      current = (byStartKey.get(pointKey(current.b)) ?? []).find((e) => !used.has(e));
+    }
+    if (loop.length >= 3) loops.push(loop);
+  }
+
+  return loops.length > 0 ? loops : polygons;
 }
 
 function polygonArea(polygon: Point[]): number {
