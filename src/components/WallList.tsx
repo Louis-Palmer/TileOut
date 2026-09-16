@@ -10,6 +10,17 @@ interface WallListProps {
 
 const MIN_WALLS = 3;
 const CLOSES_TOLERANCE_MM = 50;
+const DEFAULT_NEW_WALL_LENGTH_MM = 2000;
+
+// The interior angle of a *regular* n-sided polygon. Used to reshape the
+// whole wall list into a clean pentagon/hexagon/etc. whenever a wall is
+// added or removed — without this, adding a 5th wall while every corner is
+// still fixed at 90° just retraces the same square path again (the heading
+// returns to where it started every 4 turns), stacking duplicate vertices
+// on top of each other instead of growing the shape outward.
+function regularInteriorAngleDeg(sideCount: number): number {
+  return Math.round((((sideCount - 2) * 180) / sideCount) * 100) / 100;
+}
 
 // A growing list of wall rows (length + corner angle), matching the app's
 // existing row-based form style rather than a separate wizard. The room
@@ -20,13 +31,16 @@ export function WallList({ walls, onChange, closureErrorMm }: WallListProps) {
   };
 
   const addWall = () => {
-    const last = walls[walls.length - 1];
-    onChange([...walls, { lengthMm: last?.lengthMm ?? 1000, interiorAngleDeg: 90 }]);
+    const angle = regularInteriorAngleDeg(walls.length + 1);
+    const reshaped = walls.map((wall) => ({ ...wall, interiorAngleDeg: angle }));
+    onChange([...reshaped, { lengthMm: DEFAULT_NEW_WALL_LENGTH_MM, interiorAngleDeg: angle }]);
   };
 
   const removeWall = (index: number) => {
     if (walls.length <= MIN_WALLS) return;
-    onChange(walls.filter((_, i) => i !== index));
+    const remaining = walls.filter((_, i) => i !== index);
+    const angle = regularInteriorAngleDeg(remaining.length);
+    onChange(remaining.map((wall) => ({ ...wall, interiorAngleDeg: angle })));
   };
 
   const closes = closureErrorMm < CLOSES_TOLERANCE_MM;
