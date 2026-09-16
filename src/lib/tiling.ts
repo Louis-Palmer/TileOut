@@ -52,7 +52,7 @@ export function calculateTiling(
       addLeftovers(offcutPool, offcut, piece.width, piece.height);
     } else {
       freshTilesUsed++;
-      addLeftovers(offcutPool, { width: tile.widthMm, height: tile.heightMm }, piece.width, piece.height);
+      addLeftovers(offcutPool, { width: piece.sourceWidth, height: piece.sourceHeight }, piece.width, piece.height);
     }
   }
 

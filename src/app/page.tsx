@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { createRectangleRoom } from "@/lib/shapes/rectangle";
-import { straightGridPattern } from "@/lib/patterns/grid";
+import { getPatternById, patterns } from "@/lib/patterns";
 import { calculatePacksNeeded, calculateTiling } from "@/lib/tiling";
 import type { TilePreset } from "@/lib/tiles/types";
 import { RoomDiagram } from "@/components/RoomDiagram";
@@ -19,6 +19,9 @@ export default function Home() {
   const [customWidthMm, setCustomWidthMm] = useState("300");
   const [customHeightMm, setCustomHeightMm] = useState("300");
   const [customTilesPerPack, setCustomTilesPerPack] = useState("10");
+
+  const [patternId, setPatternId] = useState<string>(patterns[0].id);
+  const selectedPattern = useMemo(() => getPatternById(patternId), [patternId]);
 
   const selectedTile = useMemo(() => {
     if (presetId === CUSTOM_TILE_ID) {
@@ -44,10 +47,10 @@ export default function Home() {
   const result = useMemo(() => {
     if (!inputsAreValid) return null;
     const room = createRectangleRoom(widthM * 1000, lengthM * 1000);
-    const tiling = calculateTiling(room, selectedTile, straightGridPattern);
+    const tiling = calculateTiling(room, selectedTile, selectedPattern);
     const packs = calculatePacksNeeded(tiling.freshTilesUsed, selectedTile.tilesPerPack);
     return { room, tiling, packs };
-  }, [widthM, lengthM, selectedTile, inputsAreValid]);
+  }, [widthM, lengthM, selectedTile, selectedPattern, inputsAreValid]);
 
   return (
     <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-8 px-4 py-10 sm:px-6">
@@ -154,6 +157,27 @@ export default function Home() {
             )}
           </section>
 
+          <section className="rounded-xl border-2 border-gray-300 p-6 dark:border-gray-700">
+            <h2 className="text-2xl font-semibold">3. Pattern</h2>
+            <p className="mt-1 text-base text-gray-600 dark:text-gray-400">
+              How the tiles are laid out across the floor.
+            </p>
+            <label className="mt-4 flex flex-col gap-2 text-lg">
+              Pattern
+              <select
+                value={patternId}
+                onChange={(e) => setPatternId(e.target.value)}
+                className="rounded-lg border-2 border-gray-400 px-4 py-3 text-xl dark:bg-gray-900"
+              >
+                {patterns.map((pattern) => (
+                  <option key={pattern.id} value={pattern.id}>
+                    {pattern.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </section>
+
           {result && (
             <section className="rounded-xl border-2 border-blue-700 bg-blue-50 p-6 dark:bg-blue-950">
               <h2 className="text-2xl font-semibold">Results</h2>
@@ -192,7 +216,7 @@ export default function Home() {
 
           <div className="flex h-[70vh] min-h-[360px] w-full items-center justify-center rounded-xl border-2 border-gray-300 p-6 dark:border-gray-700">
             {result ? (
-              <RoomDiagram room={result.room} tile={selectedTile} pattern={straightGridPattern} />
+              <RoomDiagram room={result.room} tile={selectedTile} pattern={selectedPattern} />
             ) : (
               <p className="max-w-xs text-center text-lg text-gray-500 dark:text-gray-400">
                 Enter your room and tile sizes to see a preview of the layout.
@@ -201,9 +225,8 @@ export default function Home() {
           </div>
 
           <p className="text-base text-gray-700 dark:text-gray-300">
-            This assumes a straight layout, with tiles placed edge-to-edge
-            starting from the top-left corner. Other patterns (diagonal,
-            brick-bond) are coming soon.
+            Tiles are placed starting from the top-left corner. More patterns
+            (diagonal, brick-bond) are coming soon.
           </p>
         </div>
       </div>

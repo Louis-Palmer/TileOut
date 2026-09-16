@@ -21,6 +21,8 @@ export const straightGridPattern: TilePattern = {
           width,
           height,
           cut: width < tile.widthMm || height < tile.heightMm,
+          sourceWidth: tile.widthMm,
+          sourceHeight: tile.heightMm,
         });
       }
     }
