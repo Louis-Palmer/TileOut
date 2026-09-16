@@ -2,18 +2,35 @@
 
 import { useMemo, useState } from "react";
 import { createRectangleRoom } from "@/lib/shapes/rectangle";
+import { createPolygonRoom } from "@/lib/shapes/polygon";
+import { wallsToPolygon, type WallInput } from "@/lib/shapes/walk";
+import type { Point } from "@/lib/shapes/types";
 import { getPatternById, patterns } from "@/lib/patterns";
 import { calculatePacksNeeded, calculateTiling } from "@/lib/tiling";
 import type { TilePreset } from "@/lib/tiles/types";
 import { RoomDiagram } from "@/components/RoomDiagram";
+import { WallList } from "@/components/WallList";
 import tilePresets from "@/data/tile-presets.json";
 
 const presets = tilePresets as TilePreset[];
 const CUSTOM_TILE_ID = "custom";
 
+type RoomShapeMode = "rectangle" | "irregular";
+
+const DEFAULT_WALLS: WallInput[] = [
+  { lengthMm: 4000, interiorAngleDeg: 90 },
+  { lengthMm: 3000, interiorAngleDeg: 90 },
+  { lengthMm: 4000, interiorAngleDeg: 90 },
+  { lengthMm: 3000, interiorAngleDeg: 90 },
+];
+
 export default function Home() {
+  const [shapeMode, setShapeMode] = useState<RoomShapeMode>("rectangle");
   const [roomWidthM, setRoomWidthM] = useState("3");
   const [roomLengthM, setRoomLengthM] = useState("4");
+  const [walls, setWalls] = useState<WallInput[]>(DEFAULT_WALLS);
+  const [vertexOverrides, setVertexOverrides] = useState<Point[] | null>(null);
+  const [cadEditing, setCadEditing] = useState(false);
 
   const [presetId, setPresetId] = useState<string>(presets[0].id);
   const [customWidthMm, setCustomWidthMm] = useState("300");
@@ -41,16 +58,44 @@ export default function Home() {
 
   const widthM = Number(roomWidthM) || 0;
   const lengthM = Number(roomLengthM) || 0;
-  const inputsAreValid =
-    widthM > 0 && lengthM > 0 && selectedTile.widthMm > 0 && selectedTile.heightMm > 0;
+
+  const walked = useMemo(() => wallsToPolygon(walls), [walls]);
+
+  const switchToIrregular = () => {
+    setWalls([
+      { lengthMm: widthM * 1000, interiorAngleDeg: 90 },
+      { lengthMm: lengthM * 1000, interiorAngleDeg: 90 },
+      { lengthMm: widthM * 1000, interiorAngleDeg: 90 },
+      { lengthMm: lengthM * 1000, interiorAngleDeg: 90 },
+    ]);
+    setVertexOverrides(null);
+    setShapeMode("irregular");
+  };
+
+  // Editing a wall means the wall list is authoritative again — drop any
+  // corner nudges made in the CAD editor so the two inputs never fight.
+  const handleWallsChange = (nextWalls: WallInput[]) => {
+    setWalls(nextWalls);
+    setVertexOverrides(null);
+  };
+
+  const room = useMemo(() => {
+    if (shapeMode === "rectangle") {
+      if (!(widthM > 0 && lengthM > 0)) return null;
+      return createRectangleRoom(widthM * 1000, lengthM * 1000);
+    }
+    if (walls.length < 3 || walls.some((wall) => wall.lengthMm <= 0)) return null;
+    return createPolygonRoom(vertexOverrides ?? walked.vertices);
+  }, [shapeMode, widthM, lengthM, walls, walked, vertexOverrides]);
+
+  const inputsAreValid = room !== null && selectedTile.widthMm > 0 && selectedTile.heightMm > 0;
 
   const result = useMemo(() => {
-    if (!inputsAreValid) return null;
-    const room = createRectangleRoom(widthM * 1000, lengthM * 1000);
+    if (!inputsAreValid || !room) return null;
     const tiling = calculateTiling(room, selectedTile, selectedPattern);
     const packs = calculatePacksNeeded(tiling.freshTilesUsed, selectedTile.tilesPerPack);
     return { room, tiling, packs };
-  }, [widthM, lengthM, selectedTile, selectedPattern, inputsAreValid]);
+  }, [room, selectedTile, selectedPattern, inputsAreValid]);
 
   return (
     <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-8 px-4 py-10 sm:px-6">
@@ -65,36 +110,85 @@ export default function Home() {
       <div className="flex flex-1 flex-col gap-8 lg:flex-row lg:items-start">
         <div className="flex w-full flex-col gap-6 lg:w-1/4 lg:min-w-[300px]">
           <section className="rounded-xl border-2 border-gray-300 p-6 dark:border-gray-700">
-            <h2 className="text-2xl font-semibold">1. Room size</h2>
-            <p className="mt-1 text-base text-gray-600 dark:text-gray-400">
-              Measure the two longest walls, in metres.
-            </p>
-            <div className="mt-4 flex flex-col gap-4">
-              <label className="flex flex-col gap-2 text-lg">
-                Width (m)
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  min="0"
-                  step="0.01"
-                  value={roomWidthM}
-                  onChange={(e) => setRoomWidthM(e.target.value)}
-                  className="rounded-lg border-2 border-gray-400 px-4 py-3 text-xl dark:bg-gray-900"
-                />
-              </label>
-              <label className="flex flex-col gap-2 text-lg">
-                Length (m)
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  min="0"
-                  step="0.01"
-                  value={roomLengthM}
-                  onChange={(e) => setRoomLengthM(e.target.value)}
-                  className="rounded-lg border-2 border-gray-400 px-4 py-3 text-xl dark:bg-gray-900"
-                />
-              </label>
+            <h2 className="text-2xl font-semibold">1. Room shape</h2>
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setShapeMode("rectangle")}
+                className={`rounded-lg border-2 px-4 py-3 text-lg font-semibold ${
+                  shapeMode === "rectangle"
+                    ? "border-blue-700 bg-blue-700 text-white"
+                    : "border-gray-400 text-gray-700 dark:text-gray-300"
+                }`}
+              >
+                Rectangle
+              </button>
+              <button
+                type="button"
+                onClick={switchToIrregular}
+                className={`rounded-lg border-2 px-4 py-3 text-lg font-semibold ${
+                  shapeMode === "irregular"
+                    ? "border-blue-700 bg-blue-700 text-white"
+                    : "border-gray-400 text-gray-700 dark:text-gray-300"
+                }`}
+              >
+                Irregular room
+              </button>
             </div>
+
+            {shapeMode === "rectangle" ? (
+              <>
+                <p className="mt-4 text-base text-gray-600 dark:text-gray-400">
+                  Measure the two longest walls, in metres.
+                </p>
+                <div className="mt-4 flex flex-col gap-4">
+                  <label className="flex flex-col gap-2 text-lg">
+                    Width (m)
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      min="0"
+                      step="0.01"
+                      value={roomWidthM}
+                      onChange={(e) => setRoomWidthM(e.target.value)}
+                      className="rounded-lg border-2 border-gray-400 px-4 py-3 text-xl dark:bg-gray-900"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-2 text-lg">
+                    Length (m)
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      min="0"
+                      step="0.01"
+                      value={roomLengthM}
+                      onChange={(e) => setRoomLengthM(e.target.value)}
+                      className="rounded-lg border-2 border-gray-400 px-4 py-3 text-xl dark:bg-gray-900"
+                    />
+                  </label>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="mt-4 text-base text-gray-600 dark:text-gray-400">
+                  Walk around the room, entering each wall&apos;s length and the
+                  angle you turn at the end of it (a normal square corner is
+                  90°).
+                </p>
+                <div className="mt-4">
+                  <WallList walls={walls} onChange={handleWallsChange} closureErrorMm={walked.closureErrorMm} />
+                </div>
+                <label className="mt-4 flex items-center gap-3 text-base">
+                  <input
+                    type="checkbox"
+                    checked={cadEditing}
+                    onChange={(e) => setCadEditing(e.target.checked)}
+                    className="h-5 w-5"
+                  />
+                  Advanced: fine-tune corners by dragging them on the preview
+                </label>
+              </>
+            )}
           </section>
 
           <section className="rounded-xl border-2 border-gray-300 p-6 dark:border-gray-700">
@@ -216,7 +310,13 @@ export default function Home() {
 
           <div className="flex h-[70vh] min-h-[360px] w-full items-center justify-center rounded-xl border-2 border-gray-300 p-6 dark:border-gray-700">
             {result ? (
-              <RoomDiagram room={result.room} tile={selectedTile} pattern={selectedPattern} />
+              <RoomDiagram
+                room={result.room}
+                tile={selectedTile}
+                pattern={selectedPattern}
+                editable={shapeMode === "irregular" && cadEditing}
+                onVerticesChange={setVertexOverrides}
+              />
             ) : (
               <p className="max-w-xs text-center text-lg text-gray-500 dark:text-gray-400">
                 Enter your room and tile sizes to see a preview of the layout.

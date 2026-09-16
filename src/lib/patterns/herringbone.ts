@@ -1,8 +1,8 @@
 import type { RoomShape } from "../shapes/types";
 import type { TileSize } from "../tiles/types";
+import { triangulateRoom } from "../shapes/clip";
 import type { PiecePlacement, TilePattern } from "./types";
-
-const EPSILON = 1e-6;
+import { placeTile } from "./placeTile";
 
 // Straight (0/90°) herringbone: tiles alternate between a "long ways"
 // orientation and a "short ways" orientation rotated 90° from it, forming
@@ -26,9 +26,11 @@ export const herringbonePattern: TilePattern = {
     const short = Math.min(tile.widthMm, tile.heightMm);
     if (long <= 0 || short <= 0) return [];
 
+    const triangulation = triangulateRoom(room);
     const placements: PiecePlacement[] = [];
 
-    // How far the staircase/run indices need to range to cover the room,
+    // How far the staircase/run indices need to range to cover the room's
+    // bounding box (already the full extent of the room, concave or not),
     // plus one extra step of margin on each side.
     const reach = widthMm + lengthMm;
     const runRange = Math.ceil(reach / short) + 1;
@@ -38,43 +40,14 @@ export const herringbonePattern: TilePattern = {
       for (let step = -stepRange; step <= stepRange; step++) {
         const longX = run * short + step * long;
         const longY = -run * short + step * long;
-        addClippedPiece(placements, longX, longY, long, short, widthMm, lengthMm);
+        placements.push(...placeTile(triangulation, longX, longY, long, short, long, short));
 
         const shortX = longX + (long - short);
         const shortY = longY + short;
-        addClippedPiece(placements, shortX, shortY, short, long, widthMm, lengthMm);
+        placements.push(...placeTile(triangulation, shortX, shortY, short, long, short, long));
       }
     }
 
     return placements;
   },
 };
-
-function addClippedPiece(
-  placements: PiecePlacement[],
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  roomWidth: number,
-  roomLength: number
-) {
-  const x0 = Math.max(x, 0);
-  const y0 = Math.max(y, 0);
-  const x1 = Math.min(x + width, roomWidth);
-  const y1 = Math.min(y + height, roomLength);
-  if (x1 - x0 <= EPSILON || y1 - y0 <= EPSILON) return;
-
-  const clippedWidth = x1 - x0;
-  const clippedHeight = y1 - y0;
-
-  placements.push({
-    x: x0,
-    y: y0,
-    width: clippedWidth,
-    height: clippedHeight,
-    cut: clippedWidth < width - EPSILON || clippedHeight < height - EPSILON,
-    sourceWidth: width,
-    sourceHeight: height,
-  });
-}
