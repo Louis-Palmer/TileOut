@@ -1,0 +1,30 @@
+[
+  {
+    "id": "ceramic-300",
+    "name": "300 x 300mm Ceramic",
+    "widthMm": 300,
+    "heightMm": 300,
+    "tilesPerPack": 11
+  },
+  {
+    "id": "ceramic-600",
+    "name": "600 x 600mm Large Format",
+    "widthMm": 600,
+    "heightMm": 600,
+    "tilesPerPack": 4
+  },
+  {
+    "id": "metro-100x200",
+    "name": "100 x 200mm Metro / Subway",
+    "widthMm": 100,
+    "heightMm": 200,
+    "tilesPerPack": 50
+  },
+  {
+    "id": "plank-150x900",
+    "name": "150 x 900mm Wood-effect Plank",
+    "widthMm": 150,
+    "heightMm": 900,
+    "tilesPerPack": 8
+  }
+]
