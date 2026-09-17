@@ -20,6 +20,18 @@ interface RoomDiagramProps {
 
 const GRID_SNAP_MM = 10;
 
+// The diagram's viewBox auto-fits to the room's current bounding box, so
+// dragging a corner outward grows the box, which grows the viewBox, which
+// increases how many mm one screen pixel represents — meaning the same
+// finger movement maps to a bigger jump next frame. Left unchecked, that's
+// a compounding feedback loop: a slow, steady drag can explode from a few
+// metres to tens of metres within about a second (verified by simulating
+// the exact viewBox/CTM math offline). Capping how far a single drag event
+// may move the vertex turns that exponential blowup into steady, bounded
+// growth — the drag still tracks the finger closely at normal speeds, it
+// just can't runaway.
+const MAX_DRAG_STEP_MM = 400;
+
 // `touch-action: none` on the handle alone isn't fully reliable across
 // mobile browsers — some let a drag "slip" into the page's native
 // scroll/pan gesture after a small amount of movement. The robust,
@@ -212,9 +224,17 @@ export function RoomDiagram({ room, tile, groutMm, pattern, editable, onVertices
     if (!onVerticesChange) return;
     const raw = toRoomPoint(clientX, clientY);
     if (!raw) return;
+    const current = room.vertices[index];
+    const dx = raw.x - current.x;
+    const dy = raw.y - current.y;
+    const dist = Math.hypot(dx, dy);
+    const target =
+      dist > MAX_DRAG_STEP_MM
+        ? { x: current.x + (dx / dist) * MAX_DRAG_STEP_MM, y: current.y + (dy / dist) * MAX_DRAG_STEP_MM }
+        : raw;
     const snapped = {
-      x: Math.round(raw.x / GRID_SNAP_MM) * GRID_SNAP_MM,
-      y: Math.round(raw.y / GRID_SNAP_MM) * GRID_SNAP_MM,
+      x: Math.round(target.x / GRID_SNAP_MM) * GRID_SNAP_MM,
+      y: Math.round(target.y / GRID_SNAP_MM) * GRID_SNAP_MM,
     };
     const candidate = room.vertices.map((v, i) => (i === index ? snapped : v));
     if (isSimplePolygon(candidate)) onVerticesChange(candidate);
