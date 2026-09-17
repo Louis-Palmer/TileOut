@@ -23,9 +23,10 @@ export interface TilingResult {
 export function calculateTiling(
   room: RoomShape,
   tile: TileSize,
-  pattern: TilePattern
+  pattern: TilePattern,
+  groutMm: number
 ): TilingResult {
-  const placements = pattern.layout(room, tile);
+  const placements = pattern.layout(room, tile, groutMm);
   const offcutPool: Offcut[] = [];
 
   let fullTiles = 0;

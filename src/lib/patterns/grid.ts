@@ -10,13 +10,13 @@ import { placeTile } from "./placeTile";
 export const straightGridPattern: TilePattern = {
   id: "straight-grid",
   name: "Straight (all tiles square to the walls)",
-  layout(room: RoomShape, tile: TileSize): PiecePlacement[] {
+  layout(room: RoomShape, tile: TileSize, groutMm: number): PiecePlacement[] {
     const { widthMm, lengthMm } = room.boundingBox;
     const triangulation = triangulateRoom(room);
     const placements: PiecePlacement[] = [];
 
-    for (let y = 0; y < lengthMm; y += tile.heightMm) {
-      for (let x = 0; x < widthMm; x += tile.widthMm) {
+    for (let y = 0; y < lengthMm; y += tile.heightMm + groutMm) {
+      for (let x = 0; x < widthMm; x += tile.widthMm + groutMm) {
         placements.push(
           ...placeTile(triangulation, x, y, tile.widthMm, tile.heightMm, tile.widthMm, tile.heightMm)
         );

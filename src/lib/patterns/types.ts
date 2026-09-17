@@ -26,12 +26,15 @@ export interface PiecePlacement {
   shape?: Point[][];
 }
 
-// A pattern turns a room + tile size into a list of piece placements.
-// "Straight/grid" is the only implementation for the prototype; herringbone,
-// diagonal, brick-bond etc. become new implementations of this same
-// interface later, without touching the calculation engine.
+// A pattern turns a room + tile size + grout width into a list of piece
+// placements. "Straight/grid" and "herringbone" are the implementations so
+// far; new patterns implement this same interface without touching the
+// calculation engine. `groutMm` only ever affects spacing between tile
+// positions — it never changes a piece's own material size (`width`/
+// `height`/`sourceWidth`/`sourceHeight`), so the offcut-reuse engine in
+// tiling.ts needs no awareness of it at all.
 export interface TilePattern {
   readonly id: string;
   readonly name: string;
-  layout(room: RoomShape, tile: TileSize): PiecePlacement[];
+  layout(room: RoomShape, tile: TileSize, groutMm: number): PiecePlacement[];
 }

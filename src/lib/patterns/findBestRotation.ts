@@ -36,11 +36,12 @@ export function findBestRotationAngle(
   room: RoomShape,
   tile: TileSize,
   pattern: TilePattern,
+  groutMm: number,
   options: RotationSearchOptions = {}
 ): RotationSearchResult {
   const { coarseStepDeg = 5, fineWindowDeg = 4, fineStepDeg = 1, maxAngleDeg = 180 } = options;
 
-  const baseline = calculateTiling(room, tile, pattern).freshTilesUsed;
+  const baseline = calculateTiling(room, tile, pattern, groutMm).freshTilesUsed;
   let best: RotationSearchResult = {
     angleDeg: 0,
     freshTilesUsed: baseline,
@@ -50,7 +51,7 @@ export function findBestRotationAngle(
   const evaluate = (angleDeg: number) => {
     if (angleDeg === 0) return;
     const { rotatedRoom } = rotateRoom(room, angleDeg);
-    const freshTilesUsed = calculateTiling(rotatedRoom, tile, pattern).freshTilesUsed;
+    const freshTilesUsed = calculateTiling(rotatedRoom, tile, pattern, groutMm).freshTilesUsed;
     if (freshTilesUsed < best.freshTilesUsed) {
       best = { angleDeg, freshTilesUsed, baselineFreshTilesUsed: baseline };
     }

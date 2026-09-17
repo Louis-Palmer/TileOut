@@ -10,6 +10,7 @@ import { centroidOf, interiorAnglesDeg, isSimplePolygon } from "@/lib/shapes/pol
 interface RoomDiagramProps {
   room: RoomShape;
   tile: TileSize;
+  groutMm: number;
   pattern: TilePattern;
   // When set, draws draggable corner handles and reports edits here
   // instead of drawing a static outline.
@@ -34,9 +35,9 @@ const TOUCH_TARGET_PX = 44;
 // special-casing. Margins and label sizes are all in the room's own
 // millimetre coordinate space, so the drawing scales correctly at any
 // container size.
-export function RoomDiagram({ room, tile, pattern, editable, onVerticesChange }: RoomDiagramProps) {
+export function RoomDiagram({ room, tile, groutMm, pattern, editable, onVerticesChange }: RoomDiagramProps) {
   const { widthMm, lengthMm } = room.boundingBox;
-  const placements = useMemo(() => pattern.layout(room, tile), [room, tile, pattern]);
+  const placements = useMemo(() => pattern.layout(room, tile, groutMm), [room, tile, groutMm, pattern]);
   const centroid = useMemo(() => centroidOf(room.vertices), [room.vertices]);
   const interiorAngles = useMemo(() => interiorAnglesDeg(room.vertices), [room.vertices]);
 

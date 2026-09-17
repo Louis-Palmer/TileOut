@@ -44,6 +44,8 @@ export default function Home() {
   const [customHeightMm, setCustomHeightMm] = useState("300");
   const [customTilesPerPack, setCustomTilesPerPack] = useState("10");
   const [customPricePerPack, setCustomPricePerPack] = useState("");
+  const [groutMmInput, setGroutMmInput] = useState("2");
+  const groutMm = Number(groutMmInput) || 0;
 
   const [patternId, setPatternId] = useState<string>(patterns[0].id);
   const basePattern = useMemo(() => getPatternById(patternId), [patternId]);
@@ -105,7 +107,7 @@ export default function Home() {
     return createPolygonRoom(vertexOverrides ?? walked.vertices);
   }, [shapeMode, widthM, lengthM, walls, walked, vertexOverrides]);
 
-  // A rotation found for one room/tile/pattern combination isn't
+  // A rotation found for one room/tile/pattern/grout combination isn't
   // necessarily still a good idea for a different one — reset to
   // horizontal whenever any of those actually change. Adjusted during
   // render (React's recommended way to reset state in response to a
@@ -114,13 +116,14 @@ export default function Home() {
   // `room` changes then), which is fine: it's just resetting a number to
   // 0, not re-running the search — exactly the "never recompute this
   // while dragging" behaviour intended.
-  const [prevRotationKey, setPrevRotationKey] = useState({ room, selectedTile, patternId });
+  const [prevRotationKey, setPrevRotationKey] = useState({ room, selectedTile, patternId, groutMm });
   if (
     prevRotationKey.room !== room ||
     prevRotationKey.selectedTile !== selectedTile ||
-    prevRotationKey.patternId !== patternId
+    prevRotationKey.patternId !== patternId ||
+    prevRotationKey.groutMm !== groutMm
   ) {
-    setPrevRotationKey({ room, selectedTile, patternId });
+    setPrevRotationKey({ room, selectedTile, patternId, groutMm });
     setRotationMode("horizontal");
     setRotationDeg(0);
     setAutoRotationResult(null);
@@ -130,10 +133,10 @@ export default function Home() {
 
   const result = useMemo(() => {
     if (!inputsAreValid || !room) return null;
-    const tiling = calculateTiling(room, selectedTile, selectedPattern);
+    const tiling = calculateTiling(room, selectedTile, selectedPattern, groutMm);
     const packs = calculatePacksNeeded(tiling.freshTilesUsed, selectedTile.tilesPerPack);
     return { room, tiling, packs };
-  }, [room, selectedTile, selectedPattern, inputsAreValid]);
+  }, [room, selectedTile, selectedPattern, groutMm, inputsAreValid]);
 
   const estimatedCost = result && selectedTile.pricePerPack ? result.packs.packs * selectedTile.pricePerPack : null;
 
@@ -157,7 +160,7 @@ export default function Home() {
     // the (synchronous) search runs — the search itself is only ever
     // triggered by this explicit click, never while dragging a corner.
     setTimeout(() => {
-      const result = findBestRotationAngle(room, selectedTile, basePattern);
+      const result = findBestRotationAngle(room, selectedTile, basePattern, groutMm);
       setRotationDeg(result.angleDeg);
       setAutoRotationResult(result);
       setIsSearchingRotation(false);
@@ -277,6 +280,19 @@ export default function Home() {
                 ))}
                 <option value={CUSTOM_TILE_ID}>Custom size&hellip;</option>
               </select>
+            </label>
+
+            <label className="mt-4 flex flex-col gap-2 text-lg">
+              Tile spacing / grout (mm)
+              <input
+                type="number"
+                inputMode="decimal"
+                min="0"
+                step="0.5"
+                value={groutMmInput}
+                onChange={(e) => setGroutMmInput(e.target.value)}
+                className="rounded-lg border-2 border-gray-400 px-4 py-3 text-xl dark:bg-gray-900"
+              />
             </label>
 
             {presetId === CUSTOM_TILE_ID && (
@@ -458,6 +474,7 @@ export default function Home() {
               <RoomDiagram
                 room={result.room}
                 tile={selectedTile}
+                groutMm={groutMm}
                 pattern={selectedPattern}
                 editable={shapeMode === "irregular" && cadEditing}
                 onVerticesChange={setVertexOverrides}

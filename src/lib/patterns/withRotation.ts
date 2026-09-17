@@ -33,9 +33,9 @@ export function withRotation(pattern: TilePattern, angleDeg: number): TilePatter
   return {
     id: pattern.id,
     name: pattern.name,
-    layout(room, tile) {
+    layout(room, tile, groutMm) {
       const { rotatedRoom, toOriginalFrame } = rotateRoom(room, angleDeg);
-      const placements = pattern.layout(rotatedRoom, tile);
+      const placements = pattern.layout(rotatedRoom, tile, groutMm);
       return placements.map((piece): PiecePlacement => {
         const localPolygons = piece.shape ?? [rectCorners(piece.x, piece.y, piece.width, piece.height)];
         return {
