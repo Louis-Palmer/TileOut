@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent } from "react";
 import type { RoomShape, Point } from "@/lib/shapes/types";
 import type { TileSize } from "@/lib/tiles/types";
@@ -100,10 +100,27 @@ export function RoomDiagram({ room, tile, groutMm, pattern, editable, onVertices
   const interiorAngles = useMemo(() => interiorAnglesDeg(room.vertices), [room.vertices]);
 
   const svgRef = useRef<SVGSVGElement>(null);
-  const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
   const [pixelsPerMm, setPixelsPerMm] = useState<number | null>(null);
   const [isCoarsePointer, setIsCoarsePointer] = useState(false);
   const unlockPageRef = useRef<(() => void) | null>(null);
+
+  // Which corner is being dragged, and (for a touch drag) which specific
+  // finger — a ref, not state, because the native touch listener below is
+  // attached once and can't rely on React re-rendering to hand it a fresh
+  // closure the way an inline JSX pointer handler gets one automatically.
+  // `touchId: null` means a mouse drag (only one can ever be active).
+  const dragRef = useRef<{ index: number; touchId: number | null } | null>(null);
+
+  // Read via this on every use inside the native touch listener, for the
+  // same reason: `room`/`onVerticesChange` must always be the latest
+  // values, not whatever they were when the listener was first attached.
+  // Updated in an effect (not directly in the render body) since mutating a
+  // ref during render is disallowed.
+  const latestRef = useRef({ room, onVerticesChange });
+  useEffect(() => {
+    latestRef.current = { room, onVerticesChange };
+  });
 
   // Safety net: if this component unmounts mid-drag (e.g. navigating away
   // with a finger still down), don't leave the page permanently frozen.
@@ -168,7 +185,7 @@ export function RoomDiagram({ room, tile, groutMm, pattern, editable, onVertices
     isCoarsePointer && pixelsPerMm ? TOUCH_TARGET_PX / 2 / pixelsPerMm : maxExtent * 0.02;
   const handleStrokeWidth = isCoarsePointer && pixelsPerMm ? 3 / pixelsPerMm : strokeWidth * 2;
 
-  function toRoomPoint(clientX: number, clientY: number): Point | null {
+  const toRoomPoint = useCallback((clientX: number, clientY: number): Point | null => {
     const svg = svgRef.current;
     const ctm = svg?.getScreenCTM();
     if (!svg || !ctm) return null;
@@ -177,36 +194,137 @@ export function RoomDiagram({ room, tile, groutMm, pattern, editable, onVertices
     point.y = clientY;
     const transformed = point.matrixTransform(ctm.inverse());
     return { x: transformed.x, y: transformed.y };
-  }
+  }, []);
 
-  function handlePointerDown(event: PointerEvent<SVGCircleElement>, index: number) {
-    event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    setDraggingIndex(index);
-    if (!unlockPageRef.current) {
-      unlockPageRef.current = lockPageInteractions();
-    }
-  }
-
-  function handlePointerMove(event: PointerEvent<SVGCircleElement>) {
-    if (draggingIndex === null || !onVerticesChange) return;
-    event.preventDefault();
-    const raw = toRoomPoint(event.clientX, event.clientY);
+  // Shared by both input paths below (mouse-via-React-pointer-events, and
+  // touch-via-native-listeners): convert a screen point to a room
+  // coordinate, snap it, validate the resulting shape stays simple, and
+  // commit it. This is the one place drag *behaviour* lives — the two
+  // input paths only differ in how they capture clientX/clientY and figure
+  // out which corner is being touched, never in what happens once they
+  // have that.
+  // Stable identities (empty dep arrays) so the native touch effect below
+  // can legitimately list them as dependencies without needing to
+  // re-attach its listeners on every render — they only ever read current
+  // values via refs, never via closed-over props/state.
+  const applyDragPosition = useCallback((index: number, clientX: number, clientY: number) => {
+    const { room, onVerticesChange } = latestRef.current;
+    if (!onVerticesChange) return;
+    const raw = toRoomPoint(clientX, clientY);
     if (!raw) return;
     const snapped = {
       x: Math.round(raw.x / GRID_SNAP_MM) * GRID_SNAP_MM,
       y: Math.round(raw.y / GRID_SNAP_MM) * GRID_SNAP_MM,
     };
-    const candidate = room.vertices.map((v, i) => (i === draggingIndex ? snapped : v));
+    const candidate = room.vertices.map((v, i) => (i === index ? snapped : v));
     if (isSimplePolygon(candidate)) onVerticesChange(candidate);
+  }, [toRoomPoint]);
+
+  const beginDrag = useCallback((index: number, touchId: number | null) => {
+    dragRef.current = { index, touchId };
+    setIsDragging(true);
+    if (!unlockPageRef.current) {
+      unlockPageRef.current = lockPageInteractions();
+    }
+  }, []);
+
+  const endDrag = useCallback(() => {
+    dragRef.current = null;
+    setIsDragging(false);
+    unlockPageRef.current?.();
+    unlockPageRef.current = null;
+  }, []);
+
+  // Mouse/pen path, via React's normal synthetic pointer events — this
+  // continues to work exactly as before. Touch input is deliberately
+  // excluded here (see the native listeners below) and handled there
+  // instead: a touch fires both a native `touchstart` and a synthesized
+  // `pointerdown` with pointerType "touch", so without this guard the same
+  // physical touch would be processed twice.
+  function handlePointerDown(event: PointerEvent<SVGCircleElement>, index: number) {
+    if (event.pointerType === "touch") return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    beginDrag(index, null);
+  }
+
+  function handlePointerMove(event: PointerEvent<SVGCircleElement>) {
+    if (event.pointerType === "touch") return;
+    const tracking = dragRef.current;
+    if (!tracking || tracking.touchId !== null) return;
+    event.preventDefault();
+    applyDragPosition(tracking.index, event.clientX, event.clientY);
   }
 
   function handlePointerUp(event: PointerEvent<SVGCircleElement>) {
+    if (event.pointerType === "touch") return;
     event.currentTarget.releasePointerCapture(event.pointerId);
-    setDraggingIndex(null);
-    unlockPageRef.current?.();
-    unlockPageRef.current = null;
+    endDrag();
   }
+
+  // Touch path: native, explicitly non-passive listeners, bypassing
+  // React's synthetic event system entirely. This is the actual fix for
+  // the drag getting hijacked by the browser's native scroll/selection
+  // gesture partway through — `{ passive: false }` is what makes
+  // `preventDefault()` here binding on the browser's own gesture
+  // arbitration, which is not something reliably guaranteed when going
+  // through React's synthetic pointer events for touch input. Touch event
+  // targeting is "sticky" to whatever element `touchstart` fired on for
+  // the rest of that touch's lifetime (unlike mouse events), so attaching
+  // all four listeners to the SVG itself is enough — no need to also
+  // listen on `window` for the finger moving outside the element.
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg || !editable || !onVerticesChange) return;
+
+    function vertexIndexFromTarget(target: EventTarget | null): number | null {
+      if (!(target instanceof Element)) return null;
+      const handle = target.closest("[data-vertex-index]");
+      if (!handle) return null;
+      const raw = handle.getAttribute("data-vertex-index");
+      return raw === null ? null : Number(raw);
+    }
+
+    function onTouchStart(event: TouchEvent) {
+      if (dragRef.current) return; // already tracking a finger
+      const touch = event.changedTouches[0];
+      const index = vertexIndexFromTarget(touch.target);
+      if (index === null) return;
+      event.preventDefault();
+      beginDrag(index, touch.identifier);
+    }
+
+    function onTouchMove(event: TouchEvent) {
+      const tracking = dragRef.current;
+      if (!tracking || tracking.touchId === null) return;
+      const touch = Array.from(event.changedTouches).find((t) => t.identifier === tracking.touchId);
+      if (!touch) return;
+      event.preventDefault();
+      applyDragPosition(tracking.index, touch.clientX, touch.clientY);
+    }
+
+    function onTouchEnd(event: TouchEvent) {
+      const tracking = dragRef.current;
+      if (!tracking || tracking.touchId === null) return;
+      const stillTracked = Array.from(event.changedTouches).some((t) => t.identifier === tracking.touchId);
+      if (!stillTracked) return;
+      endDrag();
+    }
+
+    svg.addEventListener("touchstart", onTouchStart, { passive: false });
+    svg.addEventListener("touchmove", onTouchMove, { passive: false });
+    svg.addEventListener("touchend", onTouchEnd, { passive: false });
+    svg.addEventListener("touchcancel", onTouchEnd, { passive: false });
+    return () => {
+      svg.removeEventListener("touchstart", onTouchStart);
+      svg.removeEventListener("touchmove", onTouchMove);
+      svg.removeEventListener("touchend", onTouchEnd);
+      svg.removeEventListener("touchcancel", onTouchEnd);
+    };
+    // `applyDragPosition`/`beginDrag`/`endDrag` are stable (useCallback with
+    // empty deps) so listing them here doesn't cause a re-attach on every
+    // `room` change — they always read current data via latestRef instead.
+  }, [editable, onVerticesChange, applyDragPosition, beginDrag, endDrag]);
 
   const cutCount = placements.filter((p) => p.cut).length;
 
@@ -214,7 +332,7 @@ export function RoomDiagram({ room, tile, groutMm, pattern, editable, onVertices
     <svg
       ref={svgRef}
       viewBox={`${-margin} ${-margin} ${viewBoxWidth} ${viewBoxHeight}`}
-      className={`h-full w-full ${draggingIndex !== null ? "touch-none" : ""}`}
+      className={`h-full w-full ${isDragging ? "touch-none" : ""}`}
       role="img"
       aria-label={`Room with ${room.vertices.length} corners, showing ${placements.length} tiles, ${cutCount} of them cut`}
     >
@@ -323,6 +441,7 @@ export function RoomDiagram({ room, tile, groutMm, pattern, editable, onVertices
         room.vertices.map((v, i) => (
           <circle
             key={i}
+            data-vertex-index={i}
             cx={v.x}
             cy={v.y}
             r={handleRadius}
