@@ -9,3 +9,6 @@ export function getPatternById(id: string): TilePattern {
 }
 
 export * from "./types";
+export { withRotation } from "./withRotation";
+export { findBestRotationAngle } from "./findBestRotation";
+export type { RotationSearchOptions, RotationSearchResult } from "./findBestRotation";

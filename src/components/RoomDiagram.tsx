@@ -1,11 +1,11 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent } from "react";
 import type { RoomShape, Point } from "@/lib/shapes/types";
 import type { TileSize } from "@/lib/tiles/types";
 import type { TilePattern } from "@/lib/patterns/types";
-import { interiorAnglesDeg, isSimplePolygon } from "@/lib/shapes/polygon";
+import { centroidOf, interiorAnglesDeg, isSimplePolygon } from "@/lib/shapes/polygon";
 
 interface RoomDiagramProps {
   room: RoomShape;
@@ -18,11 +18,13 @@ interface RoomDiagramProps {
 }
 
 const GRID_SNAP_MM = 10;
-
-function centroidOf(vertices: Point[]): Point {
-  const sum = vertices.reduce((acc, v) => ({ x: acc.x + v.x, y: acc.y + v.y }), { x: 0, y: 0 });
-  return { x: sum.x / vertices.length, y: sum.y / vertices.length };
-}
+// Apple/Google's minimum recommended touch target diameter. Corner handles
+// are sized from the diagram's actual on-screen pixels (not the room's own
+// millimetre scale) so they hit this size on any device — a room's mm
+// scale bears no relationship to how many CSS pixels it renders at, so a
+// handle sized as "2% of the room's extent" is tiny on a large room shown
+// on a small phone screen, and oversized on a small room on a big monitor.
+const TOUCH_TARGET_PX = 44;
 
 // Draws the room to scale and lays the same tile placements the calculator
 // used on top of it, so the picture can never disagree with the numbers.
@@ -40,6 +42,7 @@ export function RoomDiagram({ room, tile, pattern, editable, onVerticesChange }:
 
   const svgRef = useRef<SVGSVGElement>(null);
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
+  const [pixelsPerMm, setPixelsPerMm] = useState<number | null>(null);
 
   const maxExtent = Math.max(widthMm, lengthMm);
   const margin = maxExtent * 0.13;
@@ -48,9 +51,32 @@ export function RoomDiagram({ room, tile, pattern, editable, onVerticesChange }:
   const fontSize = maxExtent * 0.04;
   const angleFontSize = fontSize * 0.8;
   const strokeWidth = maxExtent * 0.003;
-  const handleRadius = maxExtent * 0.02;
   const edgeLabelOffset = margin * 0.45;
   const angleLabelOffset = margin * 0.35;
+
+  // Measure how many CSS pixels one room-millimetre actually renders as,
+  // matching the same "meet" scaling the viewBox itself uses (the smaller
+  // of the width/height ratios, since that's whichever dimension is
+  // letterboxed). Re-measures on resize/orientation change/layout shifts.
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const updateScale = () => {
+      const rect = svg.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        setPixelsPerMm(Math.min(rect.width / viewBoxWidth, rect.height / viewBoxHeight));
+      }
+    };
+    updateScale();
+    const observer = new ResizeObserver(updateScale);
+    observer.observe(svg);
+    return () => observer.disconnect();
+  }, [viewBoxWidth, viewBoxHeight]);
+
+  // Before the first measurement lands, fall back to a room-scale-relative
+  // guess so handles aren't invisible for a frame.
+  const handleRadius = pixelsPerMm ? TOUCH_TARGET_PX / 2 / pixelsPerMm : maxExtent * 0.02;
+  const handleStrokeWidth = pixelsPerMm ? 3 / pixelsPerMm : strokeWidth * 2;
 
   function toRoomPoint(clientX: number, clientY: number): Point | null {
     const svg = svgRef.current;
@@ -204,7 +230,7 @@ export function RoomDiagram({ room, tile, pattern, editable, onVerticesChange }:
             cy={v.y}
             r={handleRadius}
             className="cursor-move fill-blue-600 stroke-white dark:fill-blue-400 dark:stroke-gray-900"
-            strokeWidth={strokeWidth * 2}
+            strokeWidth={handleStrokeWidth}
             onPointerDown={(e) => handlePointerDown(e, i)}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}

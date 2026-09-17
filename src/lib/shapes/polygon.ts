@@ -21,6 +21,11 @@ export function computeArea(vertices: Point[]): number {
   return Math.abs(signedArea(vertices));
 }
 
+export function centroidOf(vertices: Point[]): Point {
+  const sum = vertices.reduce((acc, v) => ({ x: acc.x + v.x, y: acc.y + v.y }), { x: 0, y: 0 });
+  return { x: sum.x / vertices.length, y: sum.y / vertices.length };
+}
+
 export function computeBoundingBox(vertices: Point[]): RoomDimensions {
   const xs = vertices.map((v) => v.x);
   const ys = vertices.map((v) => v.y);
