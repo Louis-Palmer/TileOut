@@ -34,3 +34,25 @@ Then open [http://localhost:3000](http://localhost:3000).
 This is a standard Next.js app, so it deploys to
 [Vercel](https://vercel.com/new) by connecting your GitHub repo — pushes to
 the main branch deploy automatically, no server to manage.
+
+## Commit message format
+
+```
+<type>-<state>: <message>
+```
+
+Example: `feat-wip: Setup landing page`
+
+**Type**
+- `feat` — new feature
+- `fix` — bug fix
+- `com` — comment or documentation change
+- `style` — style change, doesn't affect function
+- `ref` — code change that isn't a bug fix or new feature
+- `perf` — performance change
+- `test` — test-related code
+- `imp` — importing/adding new files, such as packages and images
+
+**State**
+- `wip` — work in progress, incomplete code
+- `fin` — the currently scoped, finished version of the code (doesn't mean it can't change later)
