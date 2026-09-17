@@ -5,7 +5,13 @@ import { createRectangleRoom } from "@/lib/shapes/rectangle";
 import { createPolygonRoom } from "@/lib/shapes/polygon";
 import { wallsToPolygon, type WallInput } from "@/lib/shapes/walk";
 import type { Point } from "@/lib/shapes/types";
-import { getPatternById, patterns } from "@/lib/patterns";
+import {
+  findBestRotationAngle,
+  getPatternById,
+  patterns,
+  withRotation,
+  type RotationSearchResult,
+} from "@/lib/patterns";
 import { calculatePacksNeeded, calculateTiling } from "@/lib/tiling";
 import type { TilePreset } from "@/lib/tiles/types";
 import { RoomDiagram } from "@/components/RoomDiagram";
@@ -16,6 +22,7 @@ const presets = tilePresets as TilePreset[];
 const CUSTOM_TILE_ID = "custom";
 
 type RoomShapeMode = "rectangle" | "irregular";
+type RotationMode = "horizontal" | "vertical" | "auto";
 
 const DEFAULT_WALLS: WallInput[] = [
   { lengthMm: 4000, interiorAngleDeg: 90 },
@@ -36,9 +43,17 @@ export default function Home() {
   const [customWidthMm, setCustomWidthMm] = useState("300");
   const [customHeightMm, setCustomHeightMm] = useState("300");
   const [customTilesPerPack, setCustomTilesPerPack] = useState("10");
+  const [customPricePerPack, setCustomPricePerPack] = useState("");
 
   const [patternId, setPatternId] = useState<string>(patterns[0].id);
-  const selectedPattern = useMemo(() => getPatternById(patternId), [patternId]);
+  const basePattern = useMemo(() => getPatternById(patternId), [patternId]);
+
+  const [rotationMode, setRotationMode] = useState<RotationMode>("horizontal");
+  const [rotationDeg, setRotationDeg] = useState(0);
+  const [isSearchingRotation, setIsSearchingRotation] = useState(false);
+  const [autoRotationResult, setAutoRotationResult] = useState<RotationSearchResult | null>(null);
+
+  const selectedPattern = useMemo(() => withRotation(basePattern, rotationDeg), [basePattern, rotationDeg]);
 
   const selectedTile = useMemo(() => {
     if (presetId === CUSTOM_TILE_ID) {
@@ -46,6 +61,7 @@ export default function Home() {
         widthMm: Number(customWidthMm) || 0,
         heightMm: Number(customHeightMm) || 0,
         tilesPerPack: Number(customTilesPerPack) || 1,
+        pricePerPack: Number(customPricePerPack) || undefined,
       };
     }
     const preset = presets.find((p) => p.id === presetId) ?? presets[0];
@@ -53,8 +69,9 @@ export default function Home() {
       widthMm: preset.widthMm,
       heightMm: preset.heightMm,
       tilesPerPack: preset.tilesPerPack,
+      pricePerPack: preset.pricePerPack,
     };
-  }, [presetId, customWidthMm, customHeightMm, customTilesPerPack]);
+  }, [presetId, customWidthMm, customHeightMm, customTilesPerPack, customPricePerPack]);
 
   const widthM = Number(roomWidthM) || 0;
   const lengthM = Number(roomLengthM) || 0;
@@ -88,6 +105,27 @@ export default function Home() {
     return createPolygonRoom(vertexOverrides ?? walked.vertices);
   }, [shapeMode, widthM, lengthM, walls, walked, vertexOverrides]);
 
+  // A rotation found for one room/tile/pattern combination isn't
+  // necessarily still a good idea for a different one — reset to
+  // horizontal whenever any of those actually change. Adjusted during
+  // render (React's recommended way to reset state in response to a
+  // changed value) rather than in an effect, which would cause an extra
+  // visible render pass. This also runs on every CAD-drag frame (since
+  // `room` changes then), which is fine: it's just resetting a number to
+  // 0, not re-running the search — exactly the "never recompute this
+  // while dragging" behaviour intended.
+  const [prevRotationKey, setPrevRotationKey] = useState({ room, selectedTile, patternId });
+  if (
+    prevRotationKey.room !== room ||
+    prevRotationKey.selectedTile !== selectedTile ||
+    prevRotationKey.patternId !== patternId
+  ) {
+    setPrevRotationKey({ room, selectedTile, patternId });
+    setRotationMode("horizontal");
+    setRotationDeg(0);
+    setAutoRotationResult(null);
+  }
+
   const inputsAreValid = room !== null && selectedTile.widthMm > 0 && selectedTile.heightMm > 0;
 
   const result = useMemo(() => {
@@ -96,6 +134,35 @@ export default function Home() {
     const packs = calculatePacksNeeded(tiling.freshTilesUsed, selectedTile.tilesPerPack);
     return { room, tiling, packs };
   }, [room, selectedTile, selectedPattern, inputsAreValid]);
+
+  const estimatedCost = result && selectedTile.pricePerPack ? result.packs.packs * selectedTile.pricePerPack : null;
+
+  const selectHorizontal = () => {
+    setRotationMode("horizontal");
+    setRotationDeg(0);
+    setAutoRotationResult(null);
+  };
+
+  const selectVertical = () => {
+    setRotationMode("vertical");
+    setRotationDeg(90);
+    setAutoRotationResult(null);
+  };
+
+  const selectAutoRotation = () => {
+    if (!room) return;
+    setRotationMode("auto");
+    setIsSearchingRotation(true);
+    // Yield one tick so the "Calculating..." label actually paints before
+    // the (synchronous) search runs — the search itself is only ever
+    // triggered by this explicit click, never while dragging a corner.
+    setTimeout(() => {
+      const result = findBestRotationAngle(room, selectedTile, basePattern);
+      setRotationDeg(result.angleDeg);
+      setAutoRotationResult(result);
+      setIsSearchingRotation(false);
+    }, 0);
+  };
 
   return (
     <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-8 px-4 py-10 sm:px-6">
@@ -247,6 +314,18 @@ export default function Home() {
                     className="rounded-lg border-2 border-gray-400 px-4 py-3 text-xl dark:bg-gray-900"
                   />
                 </label>
+                <label className="flex flex-col gap-2 text-lg">
+                  Price per pack (£, optional)
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min="0"
+                    step="0.01"
+                    value={customPricePerPack}
+                    onChange={(e) => setCustomPricePerPack(e.target.value)}
+                    className="rounded-lg border-2 border-gray-400 px-4 py-3 text-xl dark:bg-gray-900"
+                  />
+                </label>
               </div>
             )}
           </section>
@@ -270,22 +349,88 @@ export default function Home() {
                 ))}
               </select>
             </label>
+
+            <p className="mt-4 text-base text-gray-600 dark:text-gray-400">
+              Which way the tiles run — rotating them can sometimes need
+              fewer tiles overall.
+            </p>
+            <div className="mt-4 grid grid-cols-3 gap-2">
+              <button
+                type="button"
+                onClick={selectHorizontal}
+                className={`rounded-lg border-2 px-3 py-3 text-base font-semibold ${
+                  rotationMode === "horizontal"
+                    ? "border-blue-700 bg-blue-700 text-white"
+                    : "border-gray-400 text-gray-700 dark:text-gray-300"
+                }`}
+              >
+                Horizontal
+              </button>
+              <button
+                type="button"
+                onClick={selectVertical}
+                className={`rounded-lg border-2 px-3 py-3 text-base font-semibold ${
+                  rotationMode === "vertical"
+                    ? "border-blue-700 bg-blue-700 text-white"
+                    : "border-gray-400 text-gray-700 dark:text-gray-300"
+                }`}
+              >
+                Vertical
+              </button>
+              <button
+                type="button"
+                onClick={selectAutoRotation}
+                disabled={!inputsAreValid || isSearchingRotation}
+                className={`rounded-lg border-2 px-3 py-3 text-base font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${
+                  rotationMode === "auto"
+                    ? "border-blue-700 bg-blue-700 text-white"
+                    : "border-gray-400 text-gray-700 dark:text-gray-300"
+                }`}
+              >
+                {isSearchingRotation ? "Calculating…" : "Best fit"}
+              </button>
+            </div>
+
+            {rotationMode === "auto" && autoRotationResult && (
+              <p className="mt-3 text-base font-semibold text-green-700 dark:text-green-400">
+                {autoRotationResult.angleDeg === 0
+                  ? `Horizontal is already the most efficient — ${autoRotationResult.freshTilesUsed} tiles.`
+                  : `Rotated ${autoRotationResult.angleDeg}° — ${autoRotationResult.freshTilesUsed} tiles (down from ${autoRotationResult.baselineFreshTilesUsed}).`}
+              </p>
+            )}
           </section>
 
           {result && (
             <section className="rounded-xl border-2 border-blue-700 bg-blue-50 p-6 dark:bg-blue-950">
               <h2 className="text-2xl font-semibold">Results</h2>
               <dl className="mt-4 flex flex-col gap-3 text-lg">
-                <Result label="Room area" value={`${result.room.areaM2.toFixed(2)} m²`} />
-                <Result label="Total tiles laid" value={result.tiling.totalPieces} />
-                <Result label="Full, uncut tiles" value={result.tiling.fullTiles} />
-                <Result label="Tiles that need cutting" value={result.tiling.cutPieces} />
-                <Result
-                  label="Cut pieces made from an earlier offcut"
-                  value={result.tiling.piecesFromReusedOffcuts}
-                />
+                <Result label="Tiles you need" value={result.tiling.freshTilesUsed} emphasis />
                 <Result label="Packs to buy" value={result.packs.packs} emphasis />
-                <Result label="Spare tiles left over" value={result.packs.spareTiles} />
+                {estimatedCost !== null && (
+                  <Result label="Estimated cost" value={`£${estimatedCost.toFixed(2)}`} emphasis />
+                )}
+              </dl>
+
+              <dl className="mt-4 flex flex-col gap-2 border-t border-blue-200 pt-4 dark:border-blue-800">
+                <Result label="Room area" value={`${result.room.areaM2.toFixed(2)} m²`} small />
+                <Result label="Total tiles laid" value={result.tiling.totalPieces} small />
+                <Result label="Full, uncut tiles" value={result.tiling.fullTiles} small />
+                <div>
+                  <Result label="Tiles that need cutting" value={result.tiling.cutPieces} small />
+                  <div className="mt-1 ml-4 flex flex-col gap-1 border-l-2 border-blue-200 pl-3 dark:border-blue-800">
+                    <div className="flex items-baseline justify-between gap-4 text-xs text-gray-500 dark:text-gray-400">
+                      <span>Reused from an earlier offcut</span>
+                      <span className="font-medium">{result.tiling.piecesFromReusedOffcuts}</span>
+                    </div>
+                    <div className="flex items-baseline justify-between gap-4 text-xs text-gray-500 dark:text-gray-400">
+                      <span>Freshly cut</span>
+                      <span className="font-medium">
+                        {result.tiling.cutPieces - result.tiling.piecesFromReusedOffcuts}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <Result label="Spare tiles left over" value={result.packs.spareTiles} small />
               </dl>
             </section>
           )}
@@ -308,7 +453,7 @@ export default function Home() {
             )}
           </div>
 
-          <div className="flex h-[70vh] min-h-[360px] w-full items-center justify-center rounded-xl border-2 border-gray-300 p-6 dark:border-gray-700">
+          <div className="flex h-[75vh] min-h-[420px] w-full items-center justify-center rounded-xl border-2 border-gray-300 p-2 sm:h-[70vh] sm:min-h-[360px] sm:p-6 dark:border-gray-700">
             {result ? (
               <RoomDiagram
                 room={result.room}
@@ -338,15 +483,27 @@ function Result({
   label,
   value,
   emphasis,
+  small,
 }: {
   label: string;
   value: string | number;
   emphasis?: boolean;
+  small?: boolean;
 }) {
   return (
     <div className="flex items-baseline justify-between gap-4">
-      <dt className="text-gray-700 dark:text-gray-300">{label}</dt>
-      <dd className={emphasis ? "text-2xl font-bold" : "text-xl font-semibold"}>
+      <dt className={small ? "text-sm text-gray-600 dark:text-gray-400" : "text-gray-700 dark:text-gray-300"}>
+        {label}
+      </dt>
+      <dd
+        className={
+          emphasis
+            ? "text-2xl font-bold"
+            : small
+              ? "text-sm font-semibold text-gray-700 dark:text-gray-300"
+              : "text-xl font-semibold"
+        }
+      >
         {value}
       </dd>
     </div>
