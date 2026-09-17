@@ -19,6 +19,64 @@ interface RoomDiagramProps {
 }
 
 const GRID_SNAP_MM = 10;
+
+// `touch-action: none` on the handle alone isn't fully reliable across
+// mobile browsers — some let a drag "slip" into the page's native
+// scroll/pan gesture after a small amount of movement. The robust,
+// cross-browser fix is to freeze the whole page in place for the exact
+// duration of the drag (finger down to finger up), rather than trying to
+// scope the prevention to just the handle. Fixing the body's position
+// (rather than only `overflow: hidden`, which iOS Safari doesn't reliably
+// honour for touch scrolling) is the standard trick — it has to save and
+// restore the scroll position itself, since a fixed-position body has no
+// scroll position of its own.
+//
+// This also has to suppress text selection, which is a separate native
+// gesture `touch-action` has no effect on at all. A finger moving during a
+// drag can end up over ordinary text on the page (e.g. the caption below
+// the diagram), and the browser's own gesture recognition can decide that
+// looks like a text-selection drag — visibly highlighting text, and on
+// several mobile browsers, cancelling the in-progress pointer sequence
+// (firing `pointercancel`) to hand the gesture over to native selection.
+// That's what a drag "working for a moment, then stopping, then scrolling"
+// actually is: the cancelled pointer sequence ends the custom drag (and
+// its scroll lock) partway through, and the same ongoing finger motion
+// continues as an unintercepted native scroll for the rest of the gesture.
+function lockPageInteractions(): () => void {
+  const scrollY = window.scrollY;
+  const { body } = document;
+  const previous = {
+    position: body.style.position,
+    top: body.style.top,
+    left: body.style.left,
+    right: body.style.right,
+    width: body.style.width,
+    userSelect: body.style.userSelect,
+    webkitUserSelect: body.style.getPropertyValue("-webkit-user-select"),
+    webkitTouchCallout: body.style.getPropertyValue("-webkit-touch-callout"),
+  };
+  body.style.position = "fixed";
+  body.style.top = `-${scrollY}px`;
+  body.style.left = "0";
+  body.style.right = "0";
+  body.style.width = "100%";
+  body.style.userSelect = "none";
+  body.style.setProperty("-webkit-user-select", "none");
+  body.style.setProperty("-webkit-touch-callout", "none"); // stops iOS's long-press copy/save menu too
+
+  return () => {
+    body.style.position = previous.position;
+    body.style.top = previous.top;
+    body.style.left = previous.left;
+    body.style.right = previous.right;
+    body.style.width = previous.width;
+    body.style.userSelect = previous.userSelect;
+    body.style.setProperty("-webkit-user-select", previous.webkitUserSelect);
+    body.style.setProperty("-webkit-touch-callout", previous.webkitTouchCallout);
+    window.scrollTo(0, scrollY);
+  };
+}
+
 // Apple/Google's minimum recommended touch target diameter. Corner handles
 // are sized from the diagram's actual on-screen pixels (not the room's own
 // millimetre scale) so they hit this size on any device — a room's mm
@@ -44,6 +102,31 @@ export function RoomDiagram({ room, tile, groutMm, pattern, editable, onVertices
   const svgRef = useRef<SVGSVGElement>(null);
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
   const [pixelsPerMm, setPixelsPerMm] = useState<number | null>(null);
+  const [isCoarsePointer, setIsCoarsePointer] = useState(false);
+  const unlockPageRef = useRef<(() => void) | null>(null);
+
+  // Safety net: if this component unmounts mid-drag (e.g. navigating away
+  // with a finger still down), don't leave the page permanently frozen.
+  useEffect(() => {
+    return () => {
+      unlockPageRef.current?.();
+      unlockPageRef.current = null;
+    };
+  }, []);
+
+  // "Coarse pointer" (touch) vs "fine pointer" (mouse/trackpad) is the
+  // right thing to key handle size off — screen width alone would also
+  // catch a narrow desktop window, and device type alone wouldn't catch a
+  // touchscreen laptop. Only touch devices need the enlarged touch target;
+  // a mouse can hit the smaller, room-scale-relative handle just fine, and
+  // it looks better proportioned there than an oversized fixed circle.
+  useEffect(() => {
+    const query = window.matchMedia("(pointer: coarse)");
+    const update = () => setIsCoarsePointer(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
 
   const maxExtent = Math.max(widthMm, lengthMm);
   const margin = maxExtent * 0.13;
@@ -74,10 +157,16 @@ export function RoomDiagram({ room, tile, groutMm, pattern, editable, onVertices
     return () => observer.disconnect();
   }, [viewBoxWidth, viewBoxHeight]);
 
-  // Before the first measurement lands, fall back to a room-scale-relative
-  // guess so handles aren't invisible for a frame.
-  const handleRadius = pixelsPerMm ? TOUCH_TARGET_PX / 2 / pixelsPerMm : maxExtent * 0.02;
-  const handleStrokeWidth = pixelsPerMm ? 3 / pixelsPerMm : strokeWidth * 2;
+  // On a mouse, the smaller room-scale-relative size looks better
+  // proportioned and is plenty easy to click precisely. On touch, size
+  // from the diagram's actual on-screen pixels instead (a room's mm scale
+  // bears no relationship to how many CSS pixels it renders at, so "2% of
+  // the room's extent" is tiny on a large room shown on a small phone
+  // screen) — falling back to the relative guess before the first
+  // measurement lands so handles aren't invisible for a frame.
+  const handleRadius =
+    isCoarsePointer && pixelsPerMm ? TOUCH_TARGET_PX / 2 / pixelsPerMm : maxExtent * 0.02;
+  const handleStrokeWidth = isCoarsePointer && pixelsPerMm ? 3 / pixelsPerMm : strokeWidth * 2;
 
   function toRoomPoint(clientX: number, clientY: number): Point | null {
     const svg = svgRef.current;
@@ -91,12 +180,17 @@ export function RoomDiagram({ room, tile, groutMm, pattern, editable, onVertices
   }
 
   function handlePointerDown(event: PointerEvent<SVGCircleElement>, index: number) {
+    event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     setDraggingIndex(index);
+    if (!unlockPageRef.current) {
+      unlockPageRef.current = lockPageInteractions();
+    }
   }
 
   function handlePointerMove(event: PointerEvent<SVGCircleElement>) {
     if (draggingIndex === null || !onVerticesChange) return;
+    event.preventDefault();
     const raw = toRoomPoint(event.clientX, event.clientY);
     if (!raw) return;
     const snapped = {
@@ -110,6 +204,8 @@ export function RoomDiagram({ room, tile, groutMm, pattern, editable, onVertices
   function handlePointerUp(event: PointerEvent<SVGCircleElement>) {
     event.currentTarget.releasePointerCapture(event.pointerId);
     setDraggingIndex(null);
+    unlockPageRef.current?.();
+    unlockPageRef.current = null;
   }
 
   const cutCount = placements.filter((p) => p.cut).length;
@@ -118,7 +214,7 @@ export function RoomDiagram({ room, tile, groutMm, pattern, editable, onVertices
     <svg
       ref={svgRef}
       viewBox={`${-margin} ${-margin} ${viewBoxWidth} ${viewBoxHeight}`}
-      className="h-full w-full"
+      className={`h-full w-full ${draggingIndex !== null ? "touch-none" : ""}`}
       role="img"
       aria-label={`Room with ${room.vertices.length} corners, showing ${placements.length} tiles, ${cutCount} of them cut`}
     >
@@ -230,7 +326,7 @@ export function RoomDiagram({ room, tile, groutMm, pattern, editable, onVertices
             cx={v.x}
             cy={v.y}
             r={handleRadius}
-            className="cursor-move fill-blue-600 stroke-white dark:fill-blue-400 dark:stroke-gray-900"
+            className="cursor-move touch-none fill-blue-600 stroke-white dark:fill-blue-400 dark:stroke-gray-900"
             strokeWidth={handleStrokeWidth}
             onPointerDown={(e) => handlePointerDown(e, i)}
             onPointerMove={handlePointerMove}
